@@ -34,7 +34,7 @@ PowerShell report and expiry evaluation
           |
           +--> CSV report
           |
-          +--> Logic App or Microsoft Graph email notification
+          +--> Logic App Gmail notification
 ```
 
 Cloud Shell is useful for setup and testing. It should not be the daily scheduler because Cloud Shell is an interactive environment.
@@ -359,7 +359,7 @@ application-id|credential-id|expired
 Recommended architecture:
 
 ```text
-Automation Runbook -> Logic App HTTP trigger -> Outlook connector -> Email
+Automation Runbook -> Logic App HTTP trigger -> Gmail connector -> Email
 ```
 
 The runbook sends a JSON payload containing:
@@ -388,13 +388,13 @@ EXPIRED: APP CREDENTIAL requires rotation
 
 ### Logic App permissions
 
-The Logic App needs an authenticated Outlook connection to the sending mailbox. If the Logic App uses a managed identity to access Azure Storage, assign only the required storage data-plane role.
+The Logic App needs an authenticated Gmail OAuth connection to the sending mailbox. If the Logic App uses a managed identity to access Azure Storage, assign only the required storage data-plane role.
 
 The Automation identity does not need `Mail.Send` when the Logic App sends the email.
 
 ### Enable the webhook in the runbook
 
-The runbook now supports the optional `NotificationWebhookUri` parameter. In Azure Automation, create an encrypted variable named:
+The runbook supports the optional `NotificationWebhookUri` parameter. In Azure Automation, create an encrypted variable named:
 
 ```text
 AppCredentialNotificationWebhookUri
@@ -410,7 +410,7 @@ For a manual test, the parameter can also be supplied directly:
 
 Do not put the real webhook URL in source control or ordinary runbook output.
 
-The Logic App should use `NotificationKey` to prevent duplicate messages. Recommended key format:
+The current runbook sends one webhook request for each matching credential. It does not yet persist notification history, so the Logic App must implement duplicate protection before the daily schedule is enabled. Use `NotificationKey` as the duplicate key. Recommended format:
 
 ```text
 Client ID | Credential ID | Days remaining
@@ -428,9 +428,24 @@ ExpiryDate
 DaysRemaining
 Owners
 NotificationKey
+RecommendedAction
 ```
 
 The Logic App should split `Owners`, resolve each owner to an approved email address, and send one message per owner. Do not send email when the owner value is an owner ID or an owner lookup failure.
+
+### Workload identity federation recommendation
+
+The notification includes a recommendation to assess **workload identity federation**. Federation can remove the need for long-lived client secrets or certificates when the workload supports an OIDC-based identity provider, such as GitHub Actions, Azure DevOps, or another supported CI/CD platform.
+
+Owners should confirm:
+
+1. The workload supports OIDC tokens.
+2. The issuer, subject, and audience can be restricted to the intended workload.
+3. The federated credential can be scoped to the correct application and deployment context.
+4. The application code or pipeline can use federated authentication.
+5. The required permissions are least-privilege.
+
+Federation is not universal. If the workload cannot support it, the owner must rotate the secret or certificate before expiry. Do not delete an existing credential until the replacement authentication method has been tested successfully.
 
 ### Direct Microsoft Graph email option
 
@@ -485,6 +500,16 @@ Script version: 2.0-owner-fix
 
 Save and publish the current code before starting a scheduled or published job.
 
+### No notification is sent
+
+The current script sends notifications when the calculated value is exactly `30`, `15`, or `7`, and also when it is negative (expired):
+
+```powershell
+Days remaining -in @(7, 15, 30) -or Days remaining -lt 0
+```
+
+For example, a credential at 29 days does not notify, one at 15 days does, and an expired credential also notifies. Expired credentials use the stable `expired` notification key. Do not enable the daily schedule until duplicate-history tracking is configured, otherwise an expired credential can generate an email every day.
+
 ## 17. Security practices
 
 - Use managed identity instead of client secrets.
@@ -512,14 +537,14 @@ Save and publish the current code before starting a scheduled or published job.
 - [ ] Owner names appear.
 - [ ] Runbook published.
 - [ ] Daily schedule linked.
-- [ ] Notification history configured.
+- [ ] Notification history configured in the Logic App or another persistent store.
 - [ ] Logic App or direct email path tested.
 - [ ] 30-day, 15-day, 7-day, and expired notifications tested.
 - [ ] CSV/report retention configured.
 
 ## 19. Create and configure the Logic App
 
-This section uses a **Consumption Logic App** and the Office 365 Outlook connector.
+This section uses a **Consumption Logic App** and the Gmail connector.
 
 ### 19.1 Create the Logic App
 
@@ -605,9 +630,11 @@ Encrypted: Yes
 
 The runbook reads this variable automatically. Do not paste the URL into the runbook source or write it to job output.
 
-### 19.4 Add duplicate protection
+### 19.4 Add duplicate protection before production
 
-The runbook sends a `NotificationKey` based on client ID, credential ID, and threshold. For production, add duplicate protection before sending email.
+The runbook sends a `NotificationKey` based on client ID, credential ID, and threshold. Expired credentials use `expired` as the threshold. For production, add duplicate protection before sending email.
+
+The current PowerShell runbook does not implement this storage check itself. Configure the Logic App to perform it before Gmail sends the message.
 
 Recommended approach:
 
@@ -635,7 +662,7 @@ DaysRemaining: <DaysRemaining>
 SentOnUtc: <utcNow()>
 ```
 
-The identity used by the workflow requires the minimum storage data permission needed to read and write this table. If the Logic App uses its managed identity, assign `Storage Table Data Contributor` to that identity at the storage-account scope.
+The identity used by the workflow requires the minimum storage data permission needed to read and write this table. If the Logic App uses its managed identity, assign `Storage Table Data Contributor` to that identity at the storage-account scope. Do not enable the production schedule until this duplicate check is configured, or repeated runs can send duplicate messages at a matching threshold.
 
 ### 19.5 Configure Gmail authentication
 
@@ -703,7 +730,7 @@ The Gmail connector must be authorized with the approved Google Workspace or Gma
 
 ### 19.7 Handle owner values that are not email addresses
 
-The runbook returns user UPNs when available. A UPN can normally be used as the Outlook recipient, but a group display name or service-principal display name is not necessarily an email address.
+The runbook returns user UPNs when available. A UPN can normally be used as the Gmail recipient, but a group display name or service-principal display name is not necessarily an email address.
 
 Add a support mailbox fallback:
 
