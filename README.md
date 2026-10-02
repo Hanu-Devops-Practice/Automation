@@ -428,6 +428,8 @@ ExpiryDate
 DaysRemaining
 Owners
 NotificationKey
+NotificationType
+NotificationSubject
 RecommendedAction
 ```
 
@@ -591,7 +593,10 @@ When an HTTP request is received
             "type": "array",
             "items": { "type": "string" }
         },
-        "NotificationKey": { "type": "string" }
+        "NotificationKey": { "type": "string" },
+        "NotificationType": { "type": "string" },
+        "NotificationSubject": { "type": "string" },
+        "RecommendedAction": { "type": "string" }
     },
     "required": [
         "ApplicationName",
@@ -601,7 +606,10 @@ When an HTTP request is received
         "ExpiryDate",
         "DaysRemaining",
         "Owners",
-        "NotificationKey"
+        "NotificationKey",
+        "NotificationType",
+        "NotificationSubject",
+        "RecommendedAction"
     ]
 }
 ```
@@ -705,7 +713,7 @@ Gmail - Send email
 5. Configure the **Subject** field:
 
 ```text
-APP CREDENTIAL WARNING: @{triggerBody()?['ApplicationName']} expires in @{triggerBody()?['DaysRemaining']} days
+NotificationSubject
 ```
 
 6. Configure the email body with:
@@ -722,6 +730,10 @@ Credential name: @{triggerBody()?['CredentialName']}
 Credential ID: @{triggerBody()?['CredentialId']}
 Expiry date: @{triggerBody()?['ExpiryDate']}
 Days remaining: @{triggerBody()?['DaysRemaining']}
+Notification type: @{triggerBody()?['NotificationType']}
+
+Recommended action:
+@{triggerBody()?['RecommendedAction']}
 
 Please rotate the credential before it expires and update the application owner records after rotation.
 ```
@@ -786,6 +798,9 @@ $payload = @{
         DaysRemaining = 30
         Owners = @("owner@contoso.com")
         NotificationKey = "test|credential|30"
+        NotificationType = "Expiring"
+        NotificationSubject = "APP CREDENTIAL WARNING: Test application expires in 30 days"
+        RecommendedAction = "Assess whether workload identity federation can replace this secret or certificate. If federation is not supported, rotate the credential before expiry."
 } | ConvertTo-Json
 
 Invoke-RestMethod `
